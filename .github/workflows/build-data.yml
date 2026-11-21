@@ -21,9 +21,9 @@ jobs:
       - name: Filter roads and places
         run: |
           osmium tags-filter il.osm.pbf \
-            w/highway=primary,secondary,tertiary,unclassified,residential,living_street,pedestrian,trunk,primary_link,secondary_link,tertiary_link,road,service \
+            w/highway=primary,secondary,tertiary,unclassified,residential,living_street,pedestrian,trunk,primary_link,secondary_link,tertiary_link,road,service,track,footway,path,steps,cycleway \
             n/highway=bus_stop \
-            nwr/amenity=bench,bus_station,fuel,pharmacy,shelter,police,hospital,clinic,toilets,place_of_worship \
+            nwr/amenity=bench,bus_station,fuel,pharmacy,shelter,police,hospital,clinic,toilets,place_of_worship,parking \
             nwr/tourism=hotel,hostel,guest_house,motel \
             nwr/leisure=park,playground \
             nwr/shop=supermarket,convenience,kiosk,mall \
