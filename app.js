@@ -19,9 +19,9 @@ var TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 // ================= state =================
 function blank() {
   return { center: null, seenAt: null, speed: 3.5, dir: null, startedAt: null,
-    track: [], marks: [], manual: {}, sightings: [], poiDone: {}, log: [],
+    track: [], marks: [], manual: {}, sightings: [], poiDone: {}, parkDone: {}, log: [],
     person: { name: '', desc: '', phone: '', photo: '' },
-    opts: { service: false, pois: true, voice: true } };
+    opts: { service: true, pois: true, voice: true, mode: 'car', wazeTip: false } };
 }
 var S = blank();
 try { var sv = JSON.parse(localStorage.getItem(KEY) || 'null'); if (sv) { S = Object.assign(blank(), sv); S.opts = Object.assign(blank().opts, sv.opts || {}); S.person = Object.assign(blank().person, sv.person || {}); } } catch (e) {}
@@ -78,8 +78,14 @@ rebuildCoverage();
 
 // ================= streets =================
 var segs = [];
+var CLS_NAME = ['רחוב ללא שם', 'דרך שירות / חניון / סמטה', 'דרך עפר', 'שביל להולכי רגל'];
+function countable(s) { return S.opts.mode === 'foot' || s.cls < 3; }
 function segVisited(s) { return !!S.manual[s.id] || isCov(s.mid) || (isCov(s.a) && isCov(s.b)); }
-function styleSeg(s) { return { color: s.visited ? '#43a047' : (s.svc ? '#ef9a9a' : '#e53935'), weight: s.svc ? 4 : 6, opacity: .75 }; }
+function styleSeg(s) {
+  if (!countable(s)) return { color: s.visited ? '#43a047' : '#9e9e9e', weight: 2, opacity: .7, dashArray: '3 5' };
+  var w = [6, 4, 4, 3][s.cls] || 6;
+  return { color: s.visited ? '#43a047' : (s.cls === 0 ? '#e53935' : '#ff7043'), weight: w, opacity: .8, dashArray: s.cls >= 2 ? '6 4' : null };
+}
 
 function overpass(q, ms) {
   ms = ms || 25000;
@@ -104,12 +110,13 @@ function loadLocal(c) {
     return fetch('data/t/' + k + '.json').then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; });
   })).then(function (list) {
     var got = list.filter(Boolean); if (!got.length) throw new Error('no local data');
-    var seenW = {}, seenP = {}, ways = [], ps = [];
+    var seenW = {}, seenP = {}, seenA = {}, ways = [], ps = [], parks = [];
     got.forEach(function (t) {
       (t.w || []).forEach(function (w) { if (!seenW[w[0]]) { seenW[w[0]] = 1; ways.push(w); } });
       (t.p || []).forEach(function (p) { if (!seenP[p[0]] && dist(c, [p[3], p[4]]) <= STREET_R) { seenP[p[0]] = 1; ps.push(p); } });
+      (t.a || []).forEach(function (a) { if (!seenA[a[0]] && a[2].length > 2 && dist(c, a[2][0]) <= STREET_R) { seenA[a[0]] = 1; parks.push(a); } });
     });
-    return { ways: ways, pois: ps };
+    return { ways: ways, pois: ps, parks: parks };
   });
 }
 function loadStreets(force) {
@@ -117,17 +124,17 @@ function loadStreets(force) {
   L_streets.clearLayers(); segs = [];
   if (!force) {
     try { var c = JSON.parse(localStorage.getItem(KEY_STREETS) || 'null');
-      if (c && c.center && dist(c.center, S.center) < 50) { buildSegs(c.ways); buildPois(c.pois || []); toast('הרחובות נטענו מהזיכרון'); return; } } catch (e) {}
+      if (c && c.center && dist(c.center, S.center) < 50) { rawParks = c.parks || []; buildSegs(c.ways); buildPois(c.pois || []); toast('הרחובות נטענו מהזיכרון'); return; } } catch (e) {}
   }
   toast('טוען רחובות ומקומות באזור…', 15000);
   loadLocal(S.center).then(function (d) {
-    try { localStorage.setItem(KEY_STREETS, JSON.stringify({ center: S.center, ways: d.ways, pois: d.pois })); } catch (e) {}
-    buildSegs(d.ways); buildPois(d.pois);
-    toast('נטענו ' + d.ways.length + ' רחובות ו-' + d.pois.length + ' מקומות לבדיקה', 3000);
+    try { localStorage.setItem(KEY_STREETS, JSON.stringify({ center: S.center, ways: d.ways, pois: d.pois, parks: d.parks })); } catch (e) {}
+    rawParks = d.parks; buildSegs(d.ways); buildPois(d.pois);
+    toast('נטענו ' + d.ways.length + ' רחובות ושבילים, ' + d.parks.length + ' חניונים ו-' + d.pois.length + ' מקומות לבדיקה', 3500);
   }).catch(function () { loadOverpass(); });
 }
 function loadOverpass() {
-  var hw = 'primary|secondary|tertiary|unclassified|residential|living_street|pedestrian|trunk|primary_link|secondary_link|tertiary_link|road|service';
+  var hw = 'primary|secondary|tertiary|unclassified|residential|living_street|pedestrian|trunk|primary_link|secondary_link|tertiary_link|road|service|track|footway|path|steps';
   var c0 = S.center[0] + ',' + S.center[1];
   var q = '[out:json][timeout:60];(way(around:' + STREET_R + ',' + c0 + ')[highway~"^(' + hw + ')$"];' +
     'node(around:' + STREET_R + ',' + c0 + ')[highway=bus_stop];' +
@@ -142,7 +149,9 @@ function loadOverpass() {
     data.elements.forEach(function (e) {
       var t = e.tags || {};
       if (e.type === 'way' && t.highway && e.geometry) {
-        ways.push([e.id, t['name:he'] || t.name || '', t.highway === 'service' ? 1 : 0, e.geometry.map(function (g) { return [+g.lat.toFixed(6), +g.lon.toFixed(6)]; })]);
+        var cl = { service: 1, track: 2, footway: 3, path: 3, steps: 3, pedestrian: 3 }[t.highway] || 0;
+        var ow = (t.oneway === 'yes' || t.junction === 'roundabout') ? 1 : (t.oneway === '-1' ? -1 : 0);
+        ways.push([e.id, t['name:he'] || t.name || '', cl, e.geometry.map(function (g) { return [+g.lat.toFixed(6), +g.lon.toFixed(6)]; }), cl < 3 ? ow : 0]);
       } else {
         var ll = e.type === 'node' ? [e.lat, e.lon] : (e.center ? [e.center.lat, e.center.lon] : null);
         if (!ll) return; var k = poiKind(t); if (!k) return;
@@ -157,11 +166,13 @@ function loadOverpass() {
       [['נסה שוב', function () { closeSheet(); loadStreets(true); }, 'primary'], ['המשך בלי', closeSheet]]);
   });
 }
+var rawWays = [], rawParks = [];
 function buildSegs(ways) {
+  if (ways) rawWays = ways; ways = rawWays;
   L_streets.clearLayers(); segs = [];
   ways.forEach(function (w) {
-    var id = w[0], svc = !!w[2], name = w[1] || (svc ? 'דרך שירות / חניה' : 'רחוב ללא שם'), g = w[3];
-    if (svc && !S.opts.service) return;
+    var id = w[0], cls = +w[2] || 0, name = w[1] || CLS_NAME[cls], g = w[3];
+    if ((cls === 1 || cls === 2) && !S.opts.service) return;
     for (var k = 0; k < g.length - 1; k++) {
       var a = g[k], b = g[k + 1], len = dist(a, b), parts = Math.max(1, Math.ceil(len / SEG_LEN));
       for (var p = 0; p < parts; p++) {
@@ -169,7 +180,7 @@ function buildSegs(ways) {
         var pa = [a[0] + (b[0] - a[0]) * t0, a[1] + (b[1] - a[1]) * t0], pb = [a[0] + (b[0] - a[0]) * t1, a[1] + (b[1] - a[1]) * t1];
         var mid = [(pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2], rg = ringOf(dist(S.center, mid));
         if (rg < 0) continue;
-        var s = { id: id + '_' + k + '_' + p, a: pa, b: pb, mid: mid, name: name, len: len / parts, ring: rg, svc: svc };
+        var s = { id: id + '_' + k + '_' + p, way: id, na: a, nb: b, a: pa, b: pb, mid: mid, name: name, len: len / parts, ring: rg, cls: cls };
         s.visited = segVisited(s);
         s.poly = L.polyline([pa, pb], Object.assign({ renderer: rnd }, styleSeg(s))).addTo(L_streets);
         s.poly.on('click', segClick.bind(null, s));
@@ -177,6 +188,7 @@ function buildSegs(ways) {
       }
     }
   });
+  buildParks(); buildGraph();
   stats(); if (navOn) pickNext(true);
 }
 function segClick(s, ev) {
@@ -187,7 +199,45 @@ function segClick(s, ev) {
   setTimeout(function () { var b = $('pt'); if (b) b.onclick = function () { if (S.manual[s.id]) delete S.manual[s.id]; else S.manual[s.id] = 1; save(); refreshSeg(s); stats(); map.closePopup(pop); }; }, 0);
 }
 function refreshSeg(s) { var v = segVisited(s); if (v !== s.visited) { s.visited = v; s.poly.setStyle(styleSeg(s)); } }
-function refreshNear(lat, lng) { for (var i = 0; i < segs.length; i++) { var s = segs[i]; if (!s.visited && Math.abs(s.mid[0] - lat) < 0.0008 && Math.abs(s.mid[1] - lng) < 0.0009) refreshSeg(s); } }
+function refreshNear(lat, lng) {
+  for (var i = 0; i < segs.length; i++) { var s = segs[i]; if (!s.visited && Math.abs(s.mid[0] - lat) < 0.0008 && Math.abs(s.mid[1] - lng) < 0.0009) refreshSeg(s); }
+  for (var j = 0; j < parks.length; j++) { var k = parks[j]; if (!k.visited && lat > k.bb[0] - 0.0005 && lat < k.bb[2] + 0.0005 && lng > k.bb[1] - 0.0005 && lng < k.bb[3] + 0.0005) refreshPark(k); }
+}
+
+// ---------- parking lots ----------
+var parks = [], L_parks = L.layerGroup().addTo(map);
+S.parkDone = S.parkDone || {};
+function inPoly(pt, poly) { var x = pt[1], y = pt[0], c = false;
+  for (var i = 0, j = poly.length - 1; i < poly.length; j = i++) { var xi = poly[i][1], yi = poly[i][0], xj = poly[j][1], yj = poly[j][0];
+    if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) c = !c; } return c; }
+function parkVisited(k) {
+  if (S.parkDone[k.id]) return true;
+  var cov = 0; for (var i = 0; i < k.samples.length; i++) if (isCov(k.samples[i])) cov++;
+  return cov / k.samples.length >= 0.3;
+}
+function stylePark(k) { return { color: '#ff6f00', weight: 2, fillColor: k.visited ? '#00c853' : '#ff9800', fillOpacity: k.visited ? .35 : .25 }; }
+function buildParks() {
+  L_parks.clearLayers(); parks = [];
+  rawParks.forEach(function (a) {
+    var poly = a[2], bb = [90, 180, -90, -180];
+    poly.forEach(function (p) { bb[0] = Math.min(bb[0], p[0]); bb[1] = Math.min(bb[1], p[1]); bb[2] = Math.max(bb[2], p[0]); bb[3] = Math.max(bb[3], p[1]); });
+    var mid = [(bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2], rg = ringOf(dist(S.center, mid)); if (rg < 0) return;
+    var samples = [], stLat = 12 / mLat, stLng = 12 / mLng(mid[0]);
+    for (var la = bb[0]; la <= bb[2]; la += stLat) for (var ln = bb[1]; ln <= bb[3]; ln += stLng) if (inPoly([la, ln], poly)) samples.push([la, ln]);
+    if (!samples.length) samples.push(mid);
+    var k = { id: a[0], name: a[1] || 'חניון', outline: poly, bb: bb, mid: mid, ring: rg, samples: samples };
+    k.visited = parkVisited(k);
+    k.layer = L.polygon(poly, Object.assign({ renderer: rnd }, stylePark(k))).addTo(L_parks);
+    k.layer.on('click', function (ev) {
+      L.DomEvent.stopPropagation(ev);
+      if (pick) { var cb = pick; pick = null; $('toast').style.display = 'none'; return cb([ev.latlng.lat, ev.latlng.lng]); }
+      var pop = L.popup().setLatLng(ev.latlng).setContent('<b>🅿️ ' + esc(k.name) + '</b><br>' + (k.visited ? 'נבדק ✓' : 'לא נבדק') + '<br><button id="pk">' + (S.parkDone[k.id] ? 'בטל סימון' : 'סמן: בדקתי את החניון') + '</button>').openOn(map);
+      setTimeout(function () { var b = $('pk'); if (b) b.onclick = function () { if (S.parkDone[k.id]) delete S.parkDone[k.id]; else { S.parkDone[k.id] = Date.now(); log('נבדק חניון: ' + k.name); } save(); refreshPark(k); map.closePopup(pop); updateNav(); }; }, 0);
+    });
+    parks.push(k);
+  });
+}
+function refreshPark(k) { var v = parkVisited(k); if (v !== k.visited) { k.visited = v; k.layer.setStyle(stylePark(k)); if (v) log('נסרק חניון: ' + k.name); } }
 
 // ================= places to check (POI) =================
 var POI = { bus: ['🚏', 'תחנת אוטובוס'], bench: ['🪑', 'ספסל'], park: ['🌳', 'פארק / גינה'], hotel: ['🏨', 'מלון'], fuel: ['⛽', 'תחנת דלק'],
@@ -265,7 +315,7 @@ function drawDir() {
 var lastActiveKey = '', curTarget = 0;
 function ringProgress() {
   var ra = RINGS.map(function () { return 0; }), rv = ra.slice();
-  segs.forEach(function (s) { if (!inSector(s.mid)) return; ra[s.ring] += s.len; if (s.visited) rv[s.ring] += s.len; });
+  segs.forEach(function (s) { if (!countable(s) || !inSector(s.mid)) return; ra[s.ring] += s.len; if (s.visited) rv[s.ring] += s.len; });
   var frac = ra.map(function (a, i) { return a ? rv[i] / a : 1; });
   var t = 0; while (t < RINGS.length - 1 && frac[t] >= RING_DONE) t++;
   return { ra: ra, rv: rv, frac: frac, target: t };
@@ -340,46 +390,236 @@ function say(t) {
   try { var u = new SpeechSynthesisUtterance(t); u.lang = 'he-IL'; u.rate = 1; var v = speechSynthesis.getVoices().filter(function (v) { return /^he|^iw/i.test(v.lang); })[0]; if (v) u.voice = v; speechSynthesis.cancel(); speechSynthesis.speak(u); } catch (e) {}
 }
 
+// ================= routing graph (runs on the phone, no server) =================
+var G = null;
+function nk(p) { return p[0].toFixed(6) + ',' + p[1].toFixed(6); }
+function buildGraph() {
+  var idx = {}, ll = [], adj = [], names = [], foot = S.opts.mode === 'foot';
+  function node(p) { var k = nk(p), i = idx[k]; if (i == null) { i = idx[k] = ll.length; ll.push(p); adj.push([]); } return i; }
+  rawWays.forEach(function (w) {
+    var cls = +w[2] || 0, ow = foot ? 0 : (+w[4] || 0), g = w[3];
+    if (!foot && cls === 3) return;
+    var ni = names.length; names.push(w[1] || CLS_NAME[cls]);
+    var pen = cls === 0 ? 1 : (cls === 1 ? 1.3 : 1.6);
+    for (var i = 0; i < g.length - 1; i++) {
+      var u = node(g[i]), v = node(g[i + 1]), d = dist(g[i], g[i + 1]);
+      if (ow >= 0) adj[u].push([v, d * pen, ni]);
+      if (ow <= 0) adj[v].push([u, d * pen, ni]);
+    }
+  });
+  var grid = {};
+  for (var i = 0; i < ll.length; i++) { var k = Math.floor(ll[i][0] * mLat / 100) + ':' + Math.floor(ll[i][1] * LNG0 / 100); (grid[k] = grid[k] || []).push(i); }
+  G = { ll: ll, adj: adj, names: names, grid: grid, idx: idx };
+}
+function nearestNode(p, maxM, needOut) {
+  if (!G) return -1;
+  var ci = Math.floor(p[0] * mLat / 100), cj = Math.floor(p[1] * LNG0 / 100), best = -1, bd = maxM, r = Math.ceil(maxM / 100);
+  for (var a = -r; a <= r; a++) for (var b = -r; b <= r; b++) { var c = G.grid[(ci + a) + ':' + (cj + b)]; if (!c) continue;
+    for (var i = 0; i < c.length; i++) { if (needOut && !G.adj[c[i]].length) continue; var d = dist(p, G.ll[c[i]]); if (d < bd) { bd = d; best = c[i]; } } }
+  return best;
+}
+function nearestEdge(p, maxM) {
+  var ci = Math.floor(p[0] * mLat / 100), cj = Math.floor(p[1] * LNG0 / 100), best = null, bd = maxM;
+  for (var a = -2; a <= 2; a++) for (var b = -2; b <= 2; b++) { var c = G.grid[(ci + a) + ':' + (cj + b)]; if (!c) continue;
+    for (var i = 0; i < c.length; i++) { var u = c[i], A = G.adj[u];
+      for (var k = 0; k < A.length; k++) { var v = A[k][0], pa = G.ll[u], pb = G.ll[v], kx = mLng(pa[0]);
+        var bx = (pb[1] - pa[1]) * kx, by = (pb[0] - pa[0]) * mLat, px = (p[1] - pa[1]) * kx, py = (p[0] - pa[0]) * mLat;
+        var L2 = bx * bx + by * by, t = L2 ? Math.max(0, Math.min(1, (px * bx + py * by) / L2)) : 0, dx = px - t * bx, dy = py - t * by, d = Math.sqrt(dx * dx + dy * dy);
+        if (d < bd) { bd = d; var len = Math.sqrt(L2); best = { u: u, v: v, t: t, d: d, du: t * len, dv: (1 - t) * len, ni: A[k][2] }; } } } }
+  return best;
+}
+function hasEdge(u, v) { var A = G.adj[u]; for (var i = 0; i < A.length; i++) if (A[i][0] === v) return true; return false; }
+function dijkstra(srcs, targets) {
+  var n = G.ll.length, D = new Float64Array(n).fill(Infinity), P = new Int32Array(n).fill(-1), E = new Int32Array(n).fill(-1);
+  var h = [];
+  srcs.forEach(function (sc) { if (sc[1] < D[sc[0]]) { D[sc[0]] = sc[1]; E[sc[0]] = sc[2] == null ? -1 : sc[2]; h.push([sc[1], sc[0]]); } });
+  h.sort(function (a, b) { return a[0] - b[0]; });
+  function push(x) { h.push(x); var i = h.length - 1; while (i > 0) { var j = (i - 1) >> 1; if (h[j][0] <= h[i][0]) break; var t = h[i]; h[i] = h[j]; h[j] = t; i = j; } }
+  function pop() { var top = h[0], last = h.pop(); if (h.length) { h[0] = last; var i = 0; for (;;) { var l = 2 * i + 1, r = l + 1, m = i; if (l < h.length && h[l][0] < h[m][0]) m = l; if (r < h.length && h[r][0] < h[m][0]) m = r; if (m === i) break; var t = h[i]; h[i] = h[m]; h[m] = t; i = m; } } return top; }
+  var steps = 0;
+  while (h.length) {
+    var cur = pop(), u = cur[1]; if (cur[0] > D[u]) continue;
+    if (targets[u]) { var path = [], ns = []; for (var x = u; x !== -1; x = P[x]) { path.push(x); ns.push(E[x]); } return { path: path.reverse(), names: ns.reverse() }; }
+    if (++steps > 300000) break;
+    var A = G.adj[u]; for (var i = 0; i < A.length; i++) { var v = A[i][0], nd = D[u] + A[i][1]; if (nd < D[v]) { D[v] = nd; P[v] = u; E[v] = A[i][2]; push([nd, v]); } }
+  }
+  return null;
+}
+function turnWord(ang) {
+  var a = Math.abs(ang), side = ang > 0 ? 'ימינה' : 'שמאלה';
+  if (a > 150) return ['פרסה', '↶'];
+  if (a > 60) return ['פנה ' + side, ang > 0 ? '↱' : '↰'];
+  return ['פנה קלות ' + side, ang > 0 ? '↗' : '↖'];
+}
+function makeRoute(from, seg) {
+  if (!G) return null;
+  var srcs = [], e = nearestEdge(from, 60);
+  if (e) {
+    srcs.push([e.v, e.dv, e.ni]);
+    if (hasEdge(e.v, e.u)) srcs.push([e.u, e.du, e.ni]);
+    // already on the target's own street piece → just drive along it
+    if (seg.na && ((nk(G.ll[e.u]) === nk(seg.na) && nk(G.ll[e.v]) === nk(seg.nb)) || (nk(G.ll[e.u]) === nk(seg.nb) && nk(G.ll[e.v]) === nk(seg.na)))) {
+      var dd = dist(from, seg.mid); return { pts: [from, seg.mid], cum: [0, dd], instr: [], len: dd }; }
+  } else { var src = nearestNode(from, 250, true); if (src < 0) return null; srcs.push([src, dist(from, G.ll[src])]); }
+  var tg = {}, t1, t2;
+  if (seg.na) { t1 = G.idx[nk(seg.na)]; t2 = G.idx[nk(seg.nb)]; }
+  if (t1 == null) t1 = nearestNode(seg.a || seg.mid, 150); if (t2 == null) t2 = nearestNode(seg.b || seg.mid, 150);
+  if (t1 >= 0) tg[t1] = 1; if (t2 >= 0) tg[t2] = 1;
+  if (!Object.keys(tg).length) return null;
+  var r = dijkstra(srcs, tg); if (!r) return null;
+  var pts = [from].concat(r.path.map(function (i) { return G.ll[i]; })), cum = [0];
+  pts.push(seg.mid);   // finish on the target itself
+  for (var i = 1; i < pts.length; i++) cum.push(cum[i - 1] + dist(pts[i - 1], pts[i]));
+  // r.names[k] = street of the edge arriving at r.path[k] (= pts[k+1])
+  var instr = [];
+  for (var k = 1; k < r.path.length - 1; k++) {
+    var pi = k + 1, bin = bearing(pts[pi - 1], pts[pi]), bout = bearing(pts[pi], pts[pi + 1]);
+    var ang = ((bout - bin + 540) % 360) - 180, nmIn = r.names[k], nmOut = r.names[k + 1];
+    if (Math.abs(ang) > 35 || (nmIn !== nmOut && Math.abs(ang) > 20)) { var tw = turnWord(ang); instr.push({ i: pi, text: tw[0], icon: tw[1], name: G.names[nmOut] || '' }); }
+  }
+  return { pts: pts, cum: cum, instr: instr, len: cum[cum.length - 1] };
+}
+function projOnRoute(rt, p) {
+  var best = 1e12, bi = 0, bt = 0;
+  for (var i = 0; i < rt.pts.length - 1; i++) {
+    var a = rt.pts[i], b = rt.pts[i + 1], kx = mLng(a[0]);
+    var bx = (b[1] - a[1]) * kx, by = (b[0] - a[0]) * mLat, px = (p[1] - a[1]) * kx, py = (p[0] - a[0]) * mLat;
+    var L2 = bx * bx + by * by, t = L2 ? Math.max(0, Math.min(1, (px * bx + py * by) / L2)) : 0;
+    var dx = px - t * bx, dy = py - t * by, d = Math.sqrt(dx * dx + dy * dy);
+    if (d < best) { best = d; bi = i; bt = t; }
+  }
+  return { off: best, along: rt.cum[bi] + bt * (rt.cum[bi + 1] - rt.cum[bi]) };
+}
+
 // ================= navigation =================
-var navOn = false, navT = null, skipped = {}, navFirst = true, lastSaid = 0;
-function pickNext(quiet) {
-  L_guide.clearLayers(); navT = null;
-  if (!segs.length) { $('nav').style.display = 'none'; if (!quiet) toast(S.center ? 'אין רשימת רחובות' : 'קודם התחל חיפוש'); return; }
-  var from = lastPos || S.center, pr = ringProgress(), reach = reachM();
-  var cands = function (useSec, useReach) {
-    var best = null, bd = 1e12;
+var lastArr = { name: '', t: 0 }, navOn = false, navT = null, skipped = {}, navFirst = true, lastSaid = 0, route = null, offCount = 0, lastRoute = 0, spoken = {};
+function candidates(from, pr, reach) {
+  var best = null, bd = 1e12;
+  function consider(o, d, useSec, useReach) {
+    if (useSec && !inSector(o.mid)) return; if (useReach && reach > 200 && dist(S.center, o.mid) > reach * 1.15) return;
+    if (d < bd) { bd = d; best = o; } }
+  for (var pass = 0; pass < 3 && !best; pass++) {
+    var useSec = pass < 2, useReach = pass < 1;
     for (var i = 0; i < segs.length; i++) { var s = segs[i];
-      if (s.visited || skipped[s.id] || s.ring > pr.target) continue;
-      if (useSec && !inSector(s.mid)) continue;
-      if (useReach && reach > 200 && dist(S.center, s.mid) > reach * 1.15) continue;
-      var d = dist(from, s.mid); if (s.svc) d *= 1.5; if (d < bd) { bd = d; best = s; } }
-    return best ? { s: best, d: bd } : null;
-  };
-  var r = cands(true, true) || cands(true, false) || cands(false, false);
+      if (s.visited || skipped[s.id] || s.ring > pr.target || !countable(s)) continue;
+      consider(s, dist(from, s.mid) * (s.cls === 0 ? 1 : 1.25), useSec, useReach); }
+    for (var j = 0; j < parks.length; j++) { var k = parks[j];
+      if (k.visited || skipped[k.id] || k.ring > pr.target) continue;
+      consider(k, dist(from, k.mid) * 0.8, useSec, useReach); }
+  }
+  return best ? { o: best, d: bd } : null;
+}
+function targetName() { return navT ? (navT.outline ? '🅿️ ' + navT.name : navT.name) : ''; }
+function pickNext(quiet) {
+  L_guide.clearLayers(); navT = null; route = null;
+  if (!segs.length && !parks.length) { $('nav').style.display = 'none'; if (!quiet) toast(S.center ? 'אין רשימת רחובות' : 'קודם התחל חיפוש'); return; }
+  var from = lastPos || S.center, r = candidates(from, ringProgress(), reachM());
   if (!r) { $('nav').style.display = 'none'; if (!quiet) { toast('כל הרחובות באזור הזה נבדקו'); say('כל הרחובות באזור נבדקו'); } return; }
-  navT = r.s;
-  var ln = L.polyline([from, navT.mid], { color: '#ff6f00', weight: 3, dashArray: '4 8', interactive: false }); ln._g = 1; ln.addTo(L_guide);
-  L.polyline([navT.a, navT.b], { color: '#ff6f00', weight: 14, opacity: .65, interactive: false }).addTo(L_guide);
-  $('nav').style.display = 'block'; $('navName').textContent = navT.name;
+  navT = r.o; navT.isPark = !!navT.outline;
+  if (navT.isPark) L.polygon(navT.outline, { color: '#ff6f00', weight: 4, fill: false, interactive: false }).addTo(L_guide);
+  else L.polyline([navT.a, navT.b], { color: '#ff6f00', weight: 14, opacity: .65, interactive: false }).addTo(L_guide);
+  $('nav').style.display = 'block';
   $('navWaze').href = 'https://waze.com/ul?ll=' + navT.mid[0].toFixed(6) + ',' + navT.mid[1].toFixed(6) + '&navigate=yes';
+  doRoute(from);
   if (navFirst) { navFirst = false; map.fitBounds(L.latLngBounds([from, navT.mid]).pad(0.5)); setFollow(false); setTimeout(function () { setFollow(true); }, 4000); }
-  if (Date.now() - lastSaid > 4000) { lastSaid = Date.now(); say('הבא: ' + navT.name + ', ' + Math.round(r.d / 10) * 10 + ' מטר'); }
+  if (Date.now() - lastSaid > 4000 && !(lastPos && nearTarget(lastPos))) { lastSaid = Date.now(); var dd = route ? route.len : r.d; say('היעד הבא: ' + (navT.isPark ? 'חניון ' + navT.name : navT.name) + (dd > 30 ? ', ' + Math.round(dd / 10) * 10 + ' מטר' : '')); }
   updateNav();
+}
+function doRoute(from) {
+  L_guide.eachLayer(function (l) { if (l._g) L_guide.removeLayer(l); });
+  var seg = navT.isPark ? { a: navT.mid, b: navT.outline[0], mid: navT.mid } : navT;
+  route = makeRoute(from, seg); lastRoute = Date.now(); offCount = 0; spoken = {};
+  var ln = route ? L.polyline(route.pts, { color: '#ff6f00', weight: 6, opacity: .85, interactive: false })
+                 : L.polyline([from, navT.mid], { color: '#ff6f00', weight: 3, dashArray: '4 8', interactive: false });
+  ln._g = 1; ln.addTo(L_guide);
+}
+function nearTarget(p) {
+  if (navT.isPark) return (p[0] > navT.bb[0] - 0.0003 && p[0] < navT.bb[2] + 0.0003 && p[1] > navT.bb[1] - 0.0003 && p[1] < navT.bb[3] + 0.0003);
+  return Math.min(dist(p, navT.a), dist(p, navT.b), dist(p, navT.mid)) < 35;
 }
 function updateNav() {
   if (!navOn) return;
   if (!navT || navT.visited) return pickNext(true);
-  var from = lastPos || S.center, d = dist(from, navT.mid), b = bearing(from, navT.mid);
-  $('navDist').textContent = fmtM(d);
-  $('navArrow').style.transform = 'rotate(' + ((b - (heading || 0) + 360) % 360) + 'deg)';
+  var from = lastPos || S.center;
+  if (lastPos && nearTarget(from)) {
+    $('navArrow').style.transform = 'none'; $('navArrow').textContent = navT.isPark ? '🅿️' : '⬆';
+    $('navLbl').textContent = 'הגעת'; $('navName').textContent = targetName();
+    $('navDist').textContent = navT.isPark ? 'סע בין שורות החניון עד שייצבע ירוק' : 'סע לאורך הקטע עד שייצבע ירוק';
+    if (!spoken.arr) { spoken.arr = 1;
+      var nm = navT.isPark ? 'P' + navT.id : navT.name;
+      if (nm !== lastArr.name || Date.now() - lastArr.t > 90000) say(navT.isPark ? 'הגעת לחניון. סע בין השורות' : 'סע לאורך ' + navT.name);
+      lastArr = { name: nm, t: Date.now() }; }
+    offCount = 0; return;
+  }
+  if (route) {
+    var pr = projOnRoute(route, from);
+    if (pr.off > 45) offCount++; else offCount = 0;
+    if (offCount >= 2 && Date.now() - lastRoute > 6000) { doRoute(from); if (!route) return updateNav(); pr = projOnRoute(route, from); }
+    var next = null; for (var i = 0; i < route.instr.length; i++) if (route.cum[route.instr[i].i] > pr.along + 5) { next = route.instr[i]; break; }
+    var toEnd = Math.max(0, route.len - pr.along);
+    $('navArrow').style.transform = 'none';
+    if (next) {
+      var dn = route.cum[next.i] - pr.along, nm = next.name ? ' ל' + next.name : '';
+      $('navArrow').textContent = next.icon;
+      $('navLbl').textContent = 'בעוד ' + fmtM(dn);
+      $('navName').textContent = next.text + nm;
+      $('navDist').textContent = 'יעד: ' + targetName() + ' · ' + fmtM(toEnd);
+      if (dn < 170 && dn > 60 && !spoken[next.i + 'f']) { spoken[next.i + 'f'] = 1; say('בעוד ' + Math.round(dn / 10) * 10 + ' מטר, ' + next.text + nm); }
+      if (dn <= 40 && !spoken[next.i + 'n']) { spoken[next.i + 'n'] = 1; say(next.text + nm); }
+    } else {
+      $('navArrow').textContent = '⬆';
+      $('navLbl').textContent = toEnd < 40 ? 'הגעת' : 'המשך ישר ' + fmtM(toEnd);
+      $('navName').textContent = targetName();
+      $('navDist').textContent = navT.isPark ? 'סע בין שורות החניון' : 'סע לאורך הרחוב עד שייצבע ירוק';
+
+    }
+    L_guide.eachLayer(function (l) { if (l._g) { var p = route.pts.slice(); p[0] = from; l.setLatLngs(p); } });
+    return;
+  }
+  // no street graph here – straight-line guidance
+  var d = dist(from, navT.mid), b = bearing(from, navT.mid);
+  $('navArrow').textContent = '⬆'; $('navArrow').style.transform = 'rotate(' + ((b - (heading || 0) + 360) % 360) + 'deg)';
+  $('navLbl').textContent = 'היעד הבא לבדיקה'; $('navName').textContent = targetName(); $('navDist').textContent = fmtM(d) + ' (קו אווירי)';
   L_guide.eachLayer(function (l) { if (l._g) l.setLatLngs([from, navT.mid]); });
 }
 function setNav(on) {
   navOn = on; $('bNav').className = on ? 'on' : ''; $('bNav').textContent = on ? '➡️ מנווט' : '➡️ נווט';
-  if (on) { navFirst = true; pickNext(); } else { L_guide.clearLayers(); navT = null; $('nav').style.display = 'none'; }
+  if (on) { navFirst = true; pickNext(); } else { L_guide.clearLayers(); navT = null; route = null; $('nav').style.display = 'none'; }
 }
 $('bNav').onclick = function () { if (!S.center) return startWizard(); setNav(!navOn); };
 $('navSkip').onclick = function () { if (navT) { skipped[navT.id] = 1; pickNext(); } };
+
+// ---------- Waze hand-off ----------
+var wazeAt = 0, wazeTarget = null, hiddenAt = 0;
+$('navWaze').addEventListener('click', function (e) {
+  wazeAt = Date.now(); wazeTarget = navT;
+  if (S.opts.wazeTip) return;
+  e.preventDefault(); var href = this.href;
+  S.opts.wazeTip = true; save();
+  sheet('<h2>לפני שעוברים לווייז</h2><p>כשווייז פתוח על המסך, הטלפון <b>עוצר את האפליקציה הזו</b>, והרחובות שתעבור בהם לא יסומנו אוטומטית.</p>' +
+    '<p><b>מומלץ:</b> לנווט עם הניווט של האפליקציה (הפס הכתום וההנחיה הקולית) – כך הכול נרשם.</p>' +
+    '<p class="hint">באנדרואיד אפשר גם <b>מסך מפוצל</b>: במסך האפליקציות האחרונות, לחיצה על הסמל של Chrome ← "פיצול מסך", ובחצי השני ווייז. כך שתיהן פועלות.</p>' +
+    '<p class="hint">כשתחזור מווייז אשאל אם לסמן את הרחוב כנבדק.</p>' +
+    '<p><a id="wzGo" href="' + href + '" target="_blank" rel="noopener" style="display:block;text-align:center;background:#33ccff;color:#000;font-weight:700;padding:12px;border-radius:12px;text-decoration:none">פתח בווייז</a></p>',
+    [['הישאר בניווט של האפליקציה', closeSheet, 'primary']]);
+  setTimeout(function () { var a = $('wzGo'); if (a) a.onclick = function () { wazeAt = Date.now(); wazeTarget = navT; closeSheet(); }; }, 0);
+});
+document.addEventListener('visibilitychange', function () {
+  if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
+  var away = hiddenAt ? Date.now() - hiddenAt : 0; hiddenAt = 0;
+  if (away < 20000 || !S.center) return;
+  var mins = Math.max(1, Math.round(away / 60000));
+  if (wazeTarget && Date.now() - wazeAt < away + 60000 && !wazeTarget.visited) {
+    var t = wazeTarget; wazeTarget = null;
+    sheet('<h2>חזרת מווייז</h2><p>בזמן שווייז היה פתוח, המסלול לא נרשם (' + mins + ' דק\').</p><p>עברת ב<b>' + esc(t.isPark ? 'חניון ' + t.name : t.name) + '</b>?</p>', [
+      ['✅ כן, סמן כנבדק', function () { markTargetDone(t); closeSheet(); }, 'primary'], ['לא', closeSheet]]);
+  } else toast('המעקב היה מושהה ' + mins + ' דק\' בזמן שהאפליקציה לא הייתה על המסך', 5000);
+});
+function markTargetDone(t) {
+  if (t.isPark) { S.parkDone[t.id] = Date.now(); refreshPark(t); log('סומן ידנית: חניון ' + t.name); }
+  else { segs.forEach(function (s) { if (s.way === t.way && dist(s.mid, t.mid) < 200) { S.manual[s.id] = 1; refreshSeg(s); } }); log('סומן ידנית (אחרי ווייז): ' + t.name); }
+  save(); stats(); updateNav();
+}
 
 // ================= sheets / toast =================
 function sheet(html, btns, cls) {
@@ -394,6 +634,13 @@ var toastT = null;
 function toast(t, ms) { var e = $('toast'); e.textContent = t; e.style.display = 'block'; clearTimeout(toastT); toastT = setTimeout(function () { e.style.display = 'none'; }, ms || 2500); }
 function setFollow(v) { follow = v; $('bFollow').className = v ? 'on' : ''; if (v && lastPos) map.panTo(lastPos); }
 $('bFollow').onclick = function () { setFollow(!follow); };
+function showMode() { $('bMode').textContent = S.opts.mode === 'foot' ? '🚶' : '🚗'; }
+$('bMode').onclick = function () {
+  S.opts.mode = S.opts.mode === 'foot' ? 'car' : 'foot'; save(); showMode();
+  toast(S.opts.mode === 'foot' ? 'מצב רגלי: כולל שבילים ומעברים להולכי רגל' : 'מצב רכב: כבישים, דרכי שירות, חניונים ודרכי עפר', 3500);
+  segs.forEach(function (s) { s.poly.setStyle(styleSeg(s)); }); buildGraph(); lastActiveKey = ''; stats(); if (navOn) pickNext(true);
+};
+showMode();
 map.on('dragstart', function () { setFollow(false); });
 $('bOverview').onclick = function () { setFollow(false); if (S.center) map.fitBounds(L.latLng(S.center).toBounds(Math.max(RINGS[RINGS.length - 1], Math.min(reachM(), 8000)) * 2)); else if (lastPos) map.setView(lastPos, 15); };
 
@@ -524,18 +771,21 @@ function help() {
     '<li><b>מעגלים:</b> מסיימים קודם את הקרוב (300 מ\'), ואז מתרחבים. המעגל הכתום הוא המעגל הנוכחי. העיגול הסגול המנוקד = כמה רחוק יכול היה ללכת מאז שנראה, והוא גדל עם הזמן.</li>' +
     '<li><b>מקומות לבדיקה</b> (בזום קרוב): תחנות, מלונות, פארקים, בתי כנסת ועוד. לחיצה ← "בדקתי כאן".</li>' +
     '<li><b>✅ בדקתי כאן:</b> כשיורדים לבדוק ברגל. <b>👁️ נראה כאן:</b> כשמישהו ראה אותו.</li>' +
-    '<li>לחיצה על רחוב מאפשרת לסמן אותו כנבדק (למשל אם מישהו עבר בו ברגל).</li></ol>' +
+    '<li>לחיצה על רחוב מאפשרת לסמן אותו כנבדק (למשל אם מישהו עבר בו ברגל).</li>' +
+    '<li><b>🚗 / 🚶</b> למעלה: מצב רכב (כבישים, דרכי שירות, חניונים, דרכי עפר) או מצב רגלי (גם שבילים ומעברים). חניונים מסומנים בכתום ונצבעים ירוק כשעוברים בהם.</li>' +
+    '<li><b>ניווט:</b> הפס הכתום אומר מתי ולאן לפנות, עם הנחיה קולית, ומחשב מחדש אם יוצאים מהמסלול.</li>' +
+    '<li><b>ווייז:</b> כשווייז פתוח, האפליקציה מושהית ולא רושמת. עדיף לנווט עם האפליקציה עצמה.</li></ol>' +
     '<p class="hint">שמישהו אחר יפעיל את הטלפון בזמן הנהיגה. הכול נשמר בטלפון גם אם הדף נסגר.</p>', [['סגור', closeSheet]]);
 }
 function settings() {
   sheet('<h2>הגדרות</h2>' +
     '<div class="toggle"><span>הנחיה קולית</span><input type="checkbox" id="oV"' + (S.opts.voice ? ' checked' : '') + '></div>' +
     '<div class="toggle"><span>מקומות לבדיקה על המפה</span><input type="checkbox" id="oP"' + (S.opts.pois ? ' checked' : '') + '></div>' +
-    '<div class="toggle"><span>כלול דרכי שירות וחניונים</span><input type="checkbox" id="oS"' + (S.opts.service ? ' checked' : '') + '></div>' +
+    '<div class="toggle"><span>כלול דרכי שירות, חניונים ודרכי עפר</span><input type="checkbox" id="oS"' + (S.opts.service ? ' checked' : '') + '></div>' +
     '<h3>מחיקה</h3><p class="hint">מוחק את המסלול, הסימונים והדוח מהטלפון הזה.</p>',
     [['שמור', function () {
       var sv = S.opts.service; S.opts.voice = $('oV').checked; S.opts.pois = $('oP').checked; S.opts.service = $('oS').checked; save(); updatePoiVisibility(); closeSheet();
-      if (sv !== S.opts.service) loadStreets(); }, 'primary'],
+      if (sv !== S.opts.service) { buildSegs(); } }, 'primary'],
      ['🗑️ מחק הכל', function () { sheet('<h2>למחוק הכל?</h2><p>המסלול, הסימונים, היומן וכרטיס הנעדר יימחקו מהטלפון.</p>', [['כן, מחק', function () { try { localStorage.removeItem(KEY); localStorage.removeItem(KEY_STREETS); } catch (e) {} location.reload(); }, 'warn'], ['ביטול', closeSheet]]); }, 'warn']]);
 }
 
@@ -616,5 +866,11 @@ if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) navigat
 if (!S.center) selfCheck(function () { startWizard(); });
 else { startGps(); toast('ממשיכים את החיפוש הקודם'); }
 
-window.__app = { S: function () { return S; }, segs: function () { return segs; }, pois: function () { return pois; } };
+function pointAt(rt, d) { for (var i = 1; i < rt.pts.length; i++) if (rt.cum[i] >= d) { var t = (d - rt.cum[i - 1]) / ((rt.cum[i] - rt.cum[i - 1]) || 1); return [rt.pts[i - 1][0] + (rt.pts[i][0] - rt.pts[i - 1][0]) * t, rt.pts[i - 1][1] + (rt.pts[i][1] - rt.pts[i - 1][1]) * t]; } return rt.pts[rt.pts.length - 1]; }
+window.__app = { T: function (a, b) { var s0 = segs.filter(function (s) { return dist(s.mid, b) < 40; })[0]; var r = makeRoute(a, s0); return r ? { len: Math.round(r.len), instr: r.instr.map(function (x) { return x.text + (x.name ? " ל" + x.name : "") + " @" + Math.round(r.cum[x.i]); }) } : null; }, R: function () { return route ? { pts: route.pts.map(function (p) { return [+p[0].toFixed(5), +p[1].toFixed(5)]; }), cum: route.cum.map(Math.round), pr: lastPos ? projOnRoute(route, lastPos) : null } : null; }, S: function () { return S; }, segs: function () { return segs; }, pois: function () { return pois; }, parks: function () { return parks.map(function (k) { return [k.name, k.visited]; }); },
+  // test helper: a point m metres further along the current route (or along the target street once there)
+  step: function (m) { if (!navT) return null; var from = lastPos || S.center;
+    if (route && !nearTarget(from)) { var pr = projOnRoute(route, from); return pointAt(route, Math.min(route.len, pr.along + m)); }
+    var end = navT.b; if (navT.isPark) { var far = 0; navT.outline.forEach(function (q) { var dq = dist(from, q); if (dq > far) { far = dq; end = q; } }); }
+    var d = dist(from, end); if (d < m) return end; var t = m / d; return [from[0] + (end[0] - from[0]) * t, from[1] + (end[1] - from[1]) * t]; } };
 })();

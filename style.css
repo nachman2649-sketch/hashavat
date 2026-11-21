@@ -26,9 +26,9 @@ button:disabled{opacity:.5}
 .navrow{display:flex;align-items:center;gap:10px}
 #navArrow{font-size:34px;line-height:1;transition:transform .4s}
 .navtxt{flex:1;min-width:0}
-.navtxt .lbl{font-size:12px;opacity:.9}
+.navtxt .lbl{font-size:15px;font-weight:700}
 #navName{font-size:18px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#navDist{font-size:14px}
+#navDist{font-size:13px;opacity:.95}
 .navbtns{display:flex;flex-direction:column;gap:5px}
 #navWaze{background:#fff;color:#ff6f00;font-weight:700;border-radius:10px;padding:7px 10px;text-decoration:none;text-align:center}
 #navSkip{background:rgba(255,255,255,.25);color:#fff;box-shadow:none;padding:5px 8px;font-size:13px}
