@@ -1,5 +1,5 @@
 // Service worker: app works offline after first open; map tiles you've seen are kept.
-const APP = 'hashavat-app-v1';
+const APP = 'hashavat-app-v2';
 const TILES = 'hashavat-tiles-v1';
 const SHELL = ['./', 'index.html', 'app.js', 'style.css', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png',
   'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js',
