@@ -80,11 +80,12 @@ var segs = [];
 function segVisited(s) { return !!S.manual[s.id] || isCov(s.mid) || (isCov(s.a) && isCov(s.b)); }
 function styleSeg(s) { return { color: s.visited ? '#43a047' : (s.svc ? '#ef9a9a' : '#e53935'), weight: s.svc ? 4 : 6, opacity: .75 }; }
 
-function overpass(q) {
+function overpass(q, ms) {
+  ms = ms || 25000;
   return new Promise(function (res, rej) {
     (function go(i) {
       if (i >= OVERPASS.length) return rej(new Error('blocked'));
-      var ctl = ('AbortController' in window) ? new AbortController() : null, to = setTimeout(function () { if (ctl) ctl.abort(); }, 45000);
+      var ctl = ('AbortController' in window) ? new AbortController() : null, to = setTimeout(function () { if (ctl) ctl.abort(); }, ms);
       fetch(OVERPASS[i], { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal: ctl ? ctl.signal : undefined })
         .then(function (r) { clearTimeout(to); if (!r.ok) throw 0; return r.json(); }).then(res).catch(function () { clearTimeout(to); go(i + 1); });
     })(0);
@@ -125,7 +126,7 @@ function loadStreets(force) {
     buildSegs(ways); buildPois(pois);
     toast('נטענו ' + ways.length + ' רחובות ו-' + pois.length + ' מקומות לבדיקה', 3000);
   }).catch(function () {
-    sheet('<h2>לא הצלחתי לטעון את רשימת הרחובות</h2><p>ייתכן שהשירות חסום ברשת (למשל בסינון) או שאין קליטה. המיקום, המסלול, האזור שנסרק והמעגלים ממשיכים לעבוד, רק בלי צביעת רחובות ובלי ניווט לרחוב הבא.</p>',
+    sheet('<h2>לא הצלחתי לטעון את רשימת הרחובות</h2><p>ייתכן שהשירות overpass-api.de חסום ברשת (למשל בסינון של נטפרי – אפשר לבקש מהם לפתוח אותו) או שאין קליטה. המיקום, המסלול, האזור שנסרק והמעגלים ממשיכים לעבוד, רק בלי צביעת רחובות ובלי ניווט לרחוב הבא.</p>',
       [['נסה שוב', function () { closeSheet(); loadStreets(true); }, 'primary'], ['המשך בלי', closeSheet]]);
   });
 }
@@ -390,7 +391,7 @@ function selfCheck(then) {
   img.onerror = function () { done = true; set('tiles', false, 'חסום', '⚠️ המפה לא נטענת – ייתכן שהאתר tile.openstreetmap.org חסום בסינון.'); };
   img.src = TILE_URL.replace('{z}', '10').replace('{x}', '611').replace('{y}', '424') + '?t=' + Date.now();
   setTimeout(function () { if (!done) set('tiles', false, 'איטי'); }, 10000);
-  overpass('[out:json][timeout:10];node(1);out;').then(function () { set('streets', true, 'תקין'); })
+  overpass('[out:json][timeout:10];node(1);out;', 8000).then(function () { set('streets', true, 'תקין'); })
     .catch(function () { set('streets', false, 'חסום', '⚠️ רשימת הרחובות לא זמינה (overpass-api.de) – אפשר לחפש, אבל בלי צביעת רחובות וניווט.'); });
   var v = 'speechSynthesis' in window; set('voice', v, v ? 'זמין' : 'לא נתמך');
 }
