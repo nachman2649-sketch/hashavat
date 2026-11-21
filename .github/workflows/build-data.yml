@@ -1,0 +1,40 @@
+name: בניית מאגר רחובות (ישראל)
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 1 * *'   # once a month
+  push:
+    paths: ['tools/build_tiles.py', '.github/workflows/build-data.yml']
+permissions:
+  contents: write
+concurrency: { group: build-data, cancel-in-progress: true }
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install osmium
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool
+      - name: Download Israel OSM extract
+        run: wget -q -O il.osm.pbf https://download.geofabrik.de/asia/israel-and-palestine-latest.osm.pbf && ls -la il.osm.pbf
+      - name: Filter roads and places
+        run: |
+          osmium tags-filter il.osm.pbf \
+            w/highway=primary,secondary,tertiary,unclassified,residential,living_street,pedestrian,trunk,primary_link,secondary_link,tertiary_link,road,service \
+            n/highway=bus_stop \
+            nwr/amenity=bench,bus_station,fuel,pharmacy,shelter,police,hospital,clinic,toilets,place_of_worship \
+            nwr/tourism=hotel,hostel,guest_house,motel \
+            nwr/leisure=park,playground \
+            nwr/shop=supermarket,convenience,kiosk,mall \
+            -o f.osm.pbf --overwrite
+          osmium export f.osm.pbf -f geojsonseq -o f.geojsonseq --overwrite --add-unique-id=type_id
+      - name: Build tiles
+        run: rm -rf data && python3 tools/build_tiles.py f.geojsonseq data
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A data
+          git commit -q -m "עדכון מאגר רחובות $(date +%Y-%m-%d)" || echo "no changes"
+          git push

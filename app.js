@@ -12,7 +12,8 @@ var SEG_LEN = 50;                                 // split streets into pieces o
 var RING_DONE = 0.9;                              // ring counts as done at 90%
 var SECTOR = 50;                                  // half-width of direction band (deg)
 var KEY = 'hashavat_v1', KEY_STREETS = 'hashavat_streets_v1';
-var OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter'];
+var OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter', 'https://overpass.private.coffee/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+var TILE_DEG = 0.02;
 var TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 
 // ================= state =================
@@ -41,7 +42,7 @@ var L_reach = L.layerGroup().addTo(map), L_rings = L.layerGroup().addTo(map), L_
     L_guide = L.layerGroup().addTo(map), L_pois = L.layerGroup();
 var coverBand = L.polyline([], { color: '#00c853', weight: 12, opacity: .28, lineCap: 'round', lineJoin: 'round', renderer: rnd, interactive: false }).addTo(map);
 var trackLine = L.polyline([], { color: '#1e88e5', weight: 4, opacity: .9, renderer: rnd, interactive: false }).addTo(map);
-var me = null, meAcc = null, lastPos = null, heading = null, follow = true, pick = null;
+var lastAcc = 1e9, me = null, meAcc = null, lastPos = null, heading = null, follow = true, pick = null;
 
 // ================= geo =================
 var mLat = 111320;
@@ -92,6 +93,25 @@ function overpass(q, ms) {
   });
 }
 
+function tileKeys(c, r) {
+  var dLat = r / mLat, dLng = r / mLng(c[0]), keys = [];
+  for (var a = Math.floor((c[0] - dLat) / TILE_DEG); a <= Math.floor((c[0] + dLat) / TILE_DEG); a++)
+    for (var b = Math.floor((c[1] - dLng) / TILE_DEG); b <= Math.floor((c[1] + dLng) / TILE_DEG); b++) keys.push(a + '_' + b);
+  return keys;
+}
+function loadLocal(c) {
+  return Promise.all(tileKeys(c, STREET_R).map(function (k) {
+    return fetch('data/t/' + k + '.json').then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; });
+  })).then(function (list) {
+    var got = list.filter(Boolean); if (!got.length) throw new Error('no local data');
+    var seenW = {}, seenP = {}, ways = [], ps = [];
+    got.forEach(function (t) {
+      (t.w || []).forEach(function (w) { if (!seenW[w[0]]) { seenW[w[0]] = 1; ways.push(w); } });
+      (t.p || []).forEach(function (p) { if (!seenP[p[0]] && dist(c, [p[3], p[4]]) <= STREET_R) { seenP[p[0]] = 1; ps.push(p); } });
+    });
+    return { ways: ways, pois: ps };
+  });
+}
 function loadStreets(force) {
   if (!S.center) return;
   L_streets.clearLayers(); segs = [];
@@ -100,6 +120,13 @@ function loadStreets(force) {
       if (c && c.center && dist(c.center, S.center) < 50) { buildSegs(c.ways); buildPois(c.pois || []); toast('הרחובות נטענו מהזיכרון'); return; } } catch (e) {}
   }
   toast('טוען רחובות ומקומות באזור…', 15000);
+  loadLocal(S.center).then(function (d) {
+    try { localStorage.setItem(KEY_STREETS, JSON.stringify({ center: S.center, ways: d.ways, pois: d.pois })); } catch (e) {}
+    buildSegs(d.ways); buildPois(d.pois);
+    toast('נטענו ' + d.ways.length + ' רחובות ו-' + d.pois.length + ' מקומות לבדיקה', 3000);
+  }).catch(function () { loadOverpass(); });
+}
+function loadOverpass() {
   var hw = 'primary|secondary|tertiary|unclassified|residential|living_street|pedestrian|trunk|primary_link|secondary_link|tertiary_link|road|service';
   var c0 = S.center[0] + ',' + S.center[1];
   var q = '[out:json][timeout:60];(way(around:' + STREET_R + ',' + c0 + ')[highway~"^(' + hw + ')$"];' +
@@ -283,7 +310,7 @@ function onPos(p) {
     meAcc = L.circle(ll, { radius: acc, color: '#1565c0', weight: 1, fillOpacity: .08, interactive: false }).addTo(map);
     if (!S.center) map.setView(ll, 16);
   } else { me.setLatLng(ll); meAcc.setLatLng(ll).setRadius(acc); }
-  lastPos = ll;
+  lastPos = ll; lastAcc = acc;
   if (follow && !pick) map.panTo(ll, { animate: true });
   if (!S.center || acc > MAX_ACC) { updateNav(); return; }
   var prev = S.track[S.track.length - 1];
@@ -384,15 +411,28 @@ function selfCheck(then) {
   var sec = window.isSecureContext && /^https?:$/.test(location.protocol);
   set('https', sec, sec ? '' : 'לא', sec ? null : '⚠️ הדף נפתח כקובץ ולא כאתר – הטלפון לא ייתן מיקום. יש לפתוח אותו דרך הקישור (https).');
   if (!('geolocation' in navigator) || !sec) set('gps', false, 'לא זמין');
-  else navigator.geolocation.getCurrentPosition(function (p) { set('gps', true, 'דיוק ' + Math.round(p.coords.accuracy) + ' מ\''); startGps(); onPos(p); },
-    function (e) { set('gps', false, e.code === 1 ? 'אין הרשאה' : 'אין קליטה', e.code === 1 ? '⚠️ צריך לאשר מיקום: סמל המנעול ליד הכתובת ← הרשאות ← מיקום.' : 'נסה לצאת לשטח פתוח ולוודא שה-GPS בטלפון דלוק.'); }, { enableHighAccuracy: true, timeout: 15000 });
+  else {
+    var gpsOk = function (p) { var a = p.coords.accuracy;
+      if (a <= 100) set('gps', true, 'דיוק ' + Math.round(a) + ' מ\'');
+      else set('gps', true, 'מתקבל, לא מדויק (' + fmtM(a) + ')', 'ℹ️ המיקום מתקבל אבל לא מדויק. במחשב זה רגיל (אין בו GPS). בטלפון, בחוץ, עם GPS דלוק – הדיוק יהיה של כמה מטרים.');
+      startGps(); onPos(p); };
+    var gpsBad = function (e) { set('gps', false, e.code === 1 ? 'אין הרשאה' : 'לא התקבל', e.code === 1 ? '⚠️ צריך לאשר מיקום: סמל המנעול ליד הכתובת ← הרשאות ← מיקום.' : 'נסה לצאת לשטח פתוח ולוודא שה-GPS בטלפון דלוק.'); startGps(); };
+    navigator.geolocation.getCurrentPosition(gpsOk, function (e) {
+      if (e.code === 1) return gpsBad(e);
+      navigator.geolocation.getCurrentPosition(gpsOk, gpsBad, { enableHighAccuracy: false, timeout: 20000, maximumAge: 120000 });
+    }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 10000 });
+  }
   var img = new Image(), done = false;
   img.onload = function () { done = true; set('tiles', true, 'תקין'); };
   img.onerror = function () { done = true; set('tiles', false, 'חסום', '⚠️ המפה לא נטענת – ייתכן שהאתר tile.openstreetmap.org חסום בסינון.'); };
   img.src = TILE_URL.replace('{z}', '10').replace('{x}', '611').replace('{y}', '424') + '?t=' + Date.now();
   setTimeout(function () { if (!done) set('tiles', false, 'איטי'); }, 10000);
-  overpass('[out:json][timeout:10];node(1);out;', 8000).then(function () { set('streets', true, 'תקין'); })
-    .catch(function () { set('streets', false, 'חסום', '⚠️ רשימת הרחובות לא זמינה (overpass-api.de) – אפשר לחפש, אבל בלי צביעת רחובות וניווט.'); });
+  fetch('data/meta.json', { cache: 'no-store' }).then(function (r) { if (!r.ok) throw 0; return r.json(); })
+    .then(function (m) { set('streets', true, 'מאגר מקומי (' + m.built + ')'); })
+    .catch(function () {
+      overpass('[out:json][timeout:10];node(1);out;', 10000).then(function () { set('streets', true, 'משרת חיצוני'); })
+        .catch(function () { set('streets', false, 'לא זמין', '⚠️ רשימת הרחובות לא זמינה כרגע – אפשר לחפש, אבל בלי צביעת רחובות וניווט.'); });
+    });
   var v = 'speechSynthesis' in window; set('voice', v, v ? 'זמין' : 'לא נתמך');
 }
 
@@ -404,7 +444,7 @@ function startWizard() {
 }
 function wizWhere() {
   sheet('<h2>1. איפה ראו אותו לאחרונה?</h2><p class="hint">לדוגמה: היציאה מהקניון שממנה יצא, או המקום האחרון שבו נראה.</p>', [
-    ['📍 המיקום שלי עכשיו', function () { if (!lastPos) return toast('עוד אין מיקום GPS – אפשר לבחור על המפה'); W.center = lastPos; wizWhen(); }, 'primary'],
+    ['📍 המיקום שלי עכשיו', function () { if (!lastPos) return toast('עוד אין מיקום GPS – אפשר לבחור על המפה'); if (lastAcc > 200) return toast('המיקום לא מדויק כרגע (' + fmtM(lastAcc) + ') – עדיף לבחור על המפה', 5000); W.center = lastPos; wizWhen(); }, 'primary'],
     ['👆 אבחר על המפה', function () { pickOnMap('לחץ על המפה במקום שבו נראה לאחרונה', function (ll) { W.center = ll; wizWhen(); }); }],
     ['ביטול', closeSheet]], 'col');
 }
