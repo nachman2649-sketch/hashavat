@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#0d47a1">
+<title>השבת אבידה – מפת חיפוש</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+</head>
+<body>
+<div id="map"></div>
+
+<!-- top status -->
+<div id="topwrap">
+  <div id="status">
+    <div class="row"><b id="sGps">ממתין למיקום…</b><span id="sReach"></span></div>
+    <div class="row small"><span id="sDist">0.0 ק"מ</span><span id="sStreets"></span></div>
+    <div id="rings"></div>
+  </div>
+  <div class="mini">
+    <button id="bFollow" class="on" title="עקוב אחרי">🧭</button>
+    <button id="bOverview" title="כל האזור">🗺️</button>
+  </div>
+</div>
+
+<!-- navigation banner -->
+<div id="nav">
+  <div class="navrow">
+    <div id="navArrow">⬆</div>
+    <div class="navtxt"><div class="lbl">היעד הבא לבדיקה</div><div id="navName"></div><div id="navDist"></div></div>
+    <div class="navbtns">
+      <a id="navWaze" href="#" target="_blank" rel="noopener">Waze</a>
+      <button id="navSkip">דלג</button>
+    </div>
+  </div>
+</div>
+
+<!-- bottom bar -->
+<div id="bottom">
+  <button id="bNav">➡️ נווט</button>
+  <button id="bMark">✅ בדקתי כאן</button>
+  <button id="bSeen">👁️ נראה כאן</button>
+  <button id="bMenu">☰</button>
+</div>
+
+<div id="sheet"><div id="sheetBody"></div></div>
+<div id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,63 @@
+html,body{margin:0;height:100%;font-family:system-ui,-apple-system,"Segoe UI",Arial,sans-serif;background:#ddd;-webkit-tap-highlight-color:transparent}
+#map{position:absolute;inset:0}
+button{font:inherit;font-size:15px;font-weight:600;border:0;border-radius:12px;padding:11px 12px;background:#fff;color:#111;box-shadow:0 2px 8px rgba(0,0,0,.3);cursor:pointer}
+button.primary{background:#1565c0;color:#fff}
+button.on{background:#2e7d32;color:#fff}
+button.warn{background:#c62828;color:#fff}
+button.ghost{box-shadow:none;background:#eef1f5}
+button:disabled{opacity:.5}
+
+#topwrap{position:absolute;z-index:1000;top:8px;left:8px;right:8px;display:flex;gap:6px;align-items:flex-start;pointer-events:none}
+#status{flex:1;pointer-events:auto;background:rgba(255,255,255,.95);border-radius:12px;padding:7px 10px;font-size:14px;box-shadow:0 2px 8px rgba(0,0,0,.3);line-height:1.45}
+#status .row{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+#status .small{font-size:13px;color:#333}
+#sReach{color:#6a1b9a;font-weight:600}
+#rings{display:flex;gap:4px;flex-wrap:wrap;margin-top:3px}
+.rp{background:#eee;border-radius:7px;padding:1px 6px;font-size:12px}
+.rp.act{outline:2px solid #ff6f00}
+.mini{display:flex;flex-direction:column;gap:6px;pointer-events:auto}
+.mini button{padding:9px 10px;font-size:18px}
+
+#bottom{position:absolute;z-index:1000;bottom:10px;left:8px;right:8px;display:flex;gap:6px}
+#bottom button{flex:1;padding:13px 4px;font-size:15px}
+#bottom #bMenu{flex:0 0 52px;font-size:20px}
+
+#nav{position:absolute;z-index:1000;bottom:68px;left:8px;right:8px;background:#ff6f00;color:#fff;border-radius:14px;padding:9px 11px;display:none;box-shadow:0 2px 10px rgba(0,0,0,.4)}
+.navrow{display:flex;align-items:center;gap:10px}
+#navArrow{font-size:34px;line-height:1;transition:transform .4s}
+.navtxt{flex:1;min-width:0}
+.navtxt .lbl{font-size:12px;opacity:.9}
+#navName{font-size:18px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#navDist{font-size:14px}
+.navbtns{display:flex;flex-direction:column;gap:5px}
+#navWaze{background:#fff;color:#ff6f00;font-weight:700;border-radius:10px;padding:7px 10px;text-decoration:none;text-align:center}
+#navSkip{background:rgba(255,255,255,.25);color:#fff;box-shadow:none;padding:5px 8px;font-size:13px}
+
+#sheet{position:absolute;z-index:1100;inset:0;background:rgba(0,0,0,.45);display:none;align-items:flex-end;justify-content:center}
+#sheetBody{background:#fff;width:100%;max-width:560px;max-height:88%;overflow:auto;border-radius:18px 18px 0 0;padding:16px 16px 22px;box-sizing:border-box;font-size:15px;line-height:1.55}
+#sheetBody h2{margin:0 0 8px;font-size:19px}
+#sheetBody h3{margin:14px 0 6px;font-size:16px}
+#sheetBody .btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+#sheetBody .btns button{flex:1 1 40%}
+#sheetBody .col button{display:block;width:100%;margin-top:8px;text-align:right}
+#sheetBody input,#sheetBody textarea,#sheetBody select{font:inherit;font-size:16px;width:100%;box-sizing:border-box;border:1px solid #bbb;border-radius:10px;padding:9px;margin:3px 0 8px}
+#sheetBody label{font-weight:600;font-size:14px}
+.chk{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #eee}
+.chk .st{font-weight:700}
+.ok{color:#2e7d32}.bad{color:#c62828}.wait{color:#888}
+.hint{font-size:13px;color:#555;margin:2px 0 6px}
+.seg{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 8px}
+.seg button{flex:1;box-shadow:none;background:#eef1f5}
+.seg button.sel{background:#1565c0;color:#fff}
+.log{font-size:13px;max-height:220px;overflow:auto;background:#f6f7f9;border-radius:10px;padding:6px 10px}
+.log div{padding:2px 0;border-bottom:1px solid #e6e6e6}
+.photo{max-width:120px;max-height:120px;border-radius:10px;display:block;margin:4px 0}
+.toggle{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #eee}
+.toggle input{width:auto;margin:0;transform:scale(1.4)}
+
+#toast{position:absolute;z-index:1200;bottom:150px;left:50%;transform:translateX(-50%);background:#222;color:#fff;padding:8px 14px;border-radius:10px;font-size:14px;display:none;max-width:88%;text-align:center}
+.poi{font-size:18px;line-height:1;filter:drop-shadow(0 1px 1px rgba(0,0,0,.5))}
+.poi.done{opacity:.35}
+.lab{background:#6a1b9a;color:#fff;border-radius:6px;padding:1px 5px;font-size:12px;white-space:nowrap}
+.leaflet-popup-content{font-family:inherit;direction:rtl;text-align:right}
+.leaflet-popup-content button{padding:6px 10px;font-size:14px;margin-top:6px}
