@@ -471,11 +471,23 @@ function makeRoute(from, seg) {
   pts.push(seg.mid);   // finish on the target itself
   for (var i = 1; i < pts.length; i++) cum.push(cum[i - 1] + dist(pts[i - 1], pts[i]));
   // r.names[k] = street of the edge arriving at r.path[k] (= pts[k+1])
-  var instr = [];
+  function at(d) { d = Math.max(0, Math.min(cum[cum.length - 1], d)); for (var j = 1; j < pts.length; j++) if (cum[j] >= d) { var t = (d - cum[j - 1]) / ((cum[j] - cum[j - 1]) || 1); return [pts[j - 1][0] + (pts[j][0] - pts[j - 1][0]) * t, pts[j - 1][1] + (pts[j][1] - pts[j - 1][1]) * t]; } return pts[pts.length - 1]; }
+  function generic(n) { return !n || CLS_NAME.indexOf(n) >= 0; }
+  function isRound(n) { return /^כיכר/.test(n || ''); }
+  var instr = [], eff = G.names[r.names[1]] || '', inRound = false;
+  if (generic(eff)) eff = '';
   for (var k = 1; k < r.path.length - 1; k++) {
-    var pi = k + 1, bin = bearing(pts[pi - 1], pts[pi]), bout = bearing(pts[pi], pts[pi + 1]);
-    var ang = ((bout - bin + 540) % 360) - 180, nmIn = r.names[k], nmOut = r.names[k + 1];
-    if (Math.abs(ang) > 35 || (nmIn !== nmOut && Math.abs(ang) > 20)) { var tw = turnWord(ang); instr.push({ i: pi, text: tw[0], icon: tw[1], name: G.names[nmOut] || '' }); }
+    var pi = k + 1, outN = G.names[r.names[k + 1]] || '';
+    if (isRound(outN)) { inRound = true; continue; }
+    var bin = bearing(at(cum[pi] - 25), pts[pi]), bout = bearing(pts[pi], at(cum[pi] + 25));
+    var ang = ((bout - bin + 540) % 360) - 180, named = !generic(outN);
+    if (inRound) { inRound = false; instr.push({ i: pi, text: 'בכיכר, צא', icon: '↻', name: named ? outN : '' }); if (named) eff = outN; continue; }
+    var change = named && outN !== eff;
+    if (Math.abs(ang) >= 55 || (change && Math.abs(ang) >= 25)) {
+      var last = instr[instr.length - 1];
+      if (!last || cum[pi] - cum[last.i] > 25) { var tw = turnWord(ang); instr.push({ i: pi, text: tw[0], icon: tw[1], name: named ? outN : '' }); }
+    }
+    if (named) eff = outN;
   }
   return { pts: pts, cum: cum, instr: instr, len: cum[cum.length - 1] };
 }
